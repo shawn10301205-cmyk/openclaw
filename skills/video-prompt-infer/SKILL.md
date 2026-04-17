@@ -16,7 +16,7 @@ description: >
 
 ## 前置条件
 
-- 依赖 `video-to-text` 技能的转写能力（共用同一个 API）
+- 内置转写能力，无需其他技能依赖
 - API Key 已内置，开箱即用
 - 如需覆盖，设置环境变量 `TE_92K_KEY`
 - 需要 `requests` 库：`pip3 install requests`

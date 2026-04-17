@@ -13,12 +13,60 @@ import json
 import os
 import sys
 
-# 复用 video-to-text 的转写能力
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_VTT_DIR = os.path.join(os.path.dirname(_SCRIPT_DIR), "..", "video-to-text", "scripts")
-sys.path.insert(0, _VTT_DIR)
+import requests
 
-from url_to_text import url_to_text  # noqa: E402
+# ── 配置（内置转写能力，无需依赖 video-to-text）──────────
+
+_API_URL = "https://te.92k.fun/user/analysis"
+_API_KEY = os.environ.get("TE_92K_KEY", "zyj_cea870128069d6e3a9cce17b504f4dd42").strip()
+
+
+def url_to_text(url: str) -> dict:
+    """将视频 URL/分享口令转为文本。"""
+    try:
+        resp = requests.post(
+            _API_URL,
+            json={"key": _API_KEY, "url": url},
+            headers={"Content-Type": "application/json"},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+
+        if payload.get("code") != 200:
+            return {"ok": False, "error": payload.get("msg") or str(payload)}
+
+        transcripts = payload.get("transcripts") or []
+        transcript_text = ""
+        if transcripts and isinstance(transcripts, list):
+            transcript_text = transcripts[0].get("text", "")
+
+        video = payload.get("video") or {}
+        title = video.get("title", "")
+
+        if not transcript_text and video.get("text"):
+            transcript_text = video["text"]
+
+        if not transcript_text:
+            return {"ok": False, "error": "API 返回空文案，可能视频无语音"}
+
+        ka_info = payload.get("ka_info") or {}
+        remaining = ka_info.get("remaining", -1)
+
+        return {
+            "ok": True,
+            "transcript": transcript_text,
+            "title": title,
+            "source": "92k",
+            "remaining_points": remaining,
+        }
+
+    except requests.exceptions.Timeout:
+        return {"ok": False, "error": "请求超时（60秒），视频可能过长"}
+    except requests.exceptions.RequestException as e:
+        return {"ok": False, "error": f"网络错误: {e}"}
+    except Exception as e:
+        return {"ok": False, "error": f"未知错误: {e}"}
 
 
 def _format_transcript(result: dict, label: str) -> str:
