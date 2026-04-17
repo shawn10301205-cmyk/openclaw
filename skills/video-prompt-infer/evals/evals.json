@@ -1,0 +1,23 @@
+{
+  "skill_name": "video-prompt-infer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我推断这个二创视频的提示词，原视频是 https://www.douyin.com/video/7123456789 ，二创是 https://www.douyin.com/video/7987654321",
+      "expected_output": "应该调用 video-prompt-infer 技能，传入 --original 和 --derivative 参数，分别转写两个视频，输出格式化对比文本",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "我有个爆款视频和它的二创版本，帮我对比一下文案差异，看看是怎么改的。原视频分享口令：7.94 fbn:/ 复制打开抖音，看看【小明的视频】https://v.douyin.com/ieFk8abc/ 二创：5.21 hjk:/ 复制打开抖音，看看【小红讲科技的作品】https://v.douyin.com/ieGk9def/",
+      "expected_output": "应该识别出两个抖音分享口令，分别作为 original 和 derivative，调用 infer_prompt.py",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "我这有个文件，里面是10组原视频和二创的链接，帮我批量分析他们的二创手法，文件在 /tmp/video_pairs.txt",
+      "expected_output": "应该识别为批量处理场景，使用 --batch 参数，读取文件并逐组对比分析",
+      "files": []
+    }
+  ]
+}
