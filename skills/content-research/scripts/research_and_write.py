@@ -2,10 +2,14 @@
 """多源爆款搜集+AI重组文案 — 独立脚本，不依赖其他 skill。
 
 用法:
-  python research_and_write.py --url "抖音链接或分享口令"
-  python research_and_write.py --keyword "女警 身材 女性力量" --count 10
-  python research_and_write.py --batch topics.txt
-  python research_and_write.py --keyword "女警" --sort likes --count 5
+  # 步骤1: 只转写原视频，返回文案给 LLM 分析
+  python research_and_write.py --url "抖音链接或分享口令" --transcribe-only
+
+  # 步骤2: LLM 定义关键词后，搜索+转写爆款
+  python research_and_write.py --keyword "LLM定义的关键词" --count 5 --sort likes
+
+  # 一步到底（跳过 LLM 定关键词，用 jieba 自动提取）
+  python research_and_write.py --url "链接" --count 5
 """
 
 from __future__ import annotations
@@ -17,6 +21,13 @@ import sys
 import time
 
 import requests
+
+try:
+    import jieba
+    import jieba.posseg as pseg
+    HAS_JIEBA = True
+except ImportError:
+    HAS_JIEBA = False
 
 # ── 配置 ─────────────────────────────────────────────
 
@@ -186,13 +197,33 @@ def extract_hashtags(text: str) -> list[str]:
     return re.findall(r"#(\S+)", text)
 
 
+# 停用词表
+_STOPWORDS = set(
+    "的 了 在 是 我 有 和 就 不 人 都 一 一个 上 也 很 到 说 要 去 你 会 着 没有 看 好 自己 "
+    "这 他 她 它 们 那 里 为 什么 吗 啊 吧 呢 哦 哈 嗯 哎 呀 喔 哇 唉 嘿 哟 嗯".split()
+)
+
+
 def extract_keywords_from_text(text: str) -> str:
-    """从文案中提取搜索关键词。"""
-    # 去掉标签
-    clean = re.sub(r"#\S+", "", text).strip()
-    # 提取中文词组（2-6字）
-    words = re.findall(r"[\u4e00-\u9fff]{2,6}", clean)
-    # 去重保留前5个
+    """用 jieba 分词 + 停用词过滤提取搜索关键词（fallback，优先用 LLM 定义关键词）。"""
+    if not HAS_JIEBA:
+        # 没有 jieba 时，简单取前几个词
+        clean = re.sub(r"#\S+", "", text)
+        clean = re.sub(r"https?://\S+", "", clean).strip()
+        return clean[:30]
+
+    # 去掉标签和链接
+    clean = re.sub(r"#\S+", "", text)
+    clean = re.sub(r"https?://\S+", "", clean).strip()
+
+    allowed_flags = {"n", "nr", "ns", "nt", "nz", "ng", "v", "vd", "vn", "vg", "a", "ad", "an", "ag"}
+    words = []
+    for word, flag in pseg.cut(clean):
+        w = word.strip()
+        if len(w) >= 2 and w not in _STOPWORDS and not w.isdigit() and flag[:1] in allowed_flags:
+            words.append(w)
+
+    # 去重保留前 5 个
     seen = set()
     result = []
     for w in words:
@@ -211,12 +242,41 @@ def extract_url_from_share(text: str) -> str | None:
 # ── 核心流程 ──────────────────────────────────────────
 
 
-def research_by_url(url_or_share: str, count: int = 10, sort_type: str = "0") -> dict:
-    """通过视频链接/分享口令搜索相关爆款。"""
-    # 提取 URL
+def transcribe_only(url_or_share: str) -> dict:
+    """只转写原视频，返回文案供 LLM 分析定义关键词。"""
     url = extract_url_from_share(url_or_share) or url_or_share
 
-    # 转写原视频
+    print("[1/1] 转写原视频...", file=sys.stderr)
+    transcript_result = url_to_text(url)
+
+    original_desc = ""
+    original_transcript = ""
+
+    if transcript_result.get("ok"):
+        original_transcript = transcript_result.get("transcript", "")
+        original_desc = transcript_result.get("title", "")
+
+    full_text = url_or_share
+    if original_desc:
+        full_text = original_desc + " " + full_text
+    hashtags = extract_hashtags(full_text)
+
+    return {
+        "original": {
+            "url": url,
+            "desc": original_desc,
+            "transcript": original_transcript,
+            "hashtags": hashtags,
+        },
+        "transcribe_ok": transcript_result.get("ok", False),
+        "next_step": "LLM 分析文案后用 --keyword 搜索爆款",
+    }
+
+
+def research_by_url(url_or_share: str, count: int = 5, sort_type: str = "0") -> dict:
+    """一步到底模式：转写原视频 + jieba 提取关键词 + 搜索 + 转写爆款。"""
+    url = extract_url_from_share(url_or_share) or url_or_share
+
     print("[1/3] 转写原视频...", file=sys.stderr)
     transcript_result = url_to_text(url)
 
@@ -228,13 +288,11 @@ def research_by_url(url_or_share: str, count: int = 10, sort_type: str = "0") ->
         original_transcript = transcript_result.get("transcript", "")
         original_desc = transcript_result.get("title", "")
 
-    # 从分享口令或文案中提取标签
     full_text = url_or_share
     if original_desc:
         full_text = original_desc + " " + full_text
     hashtags = extract_hashtags(full_text)
 
-    # 提取搜索关键词
     search_text = original_desc or url_or_share
     keywords = extract_keywords_from_text(search_text)
     if not keywords and hashtags:
@@ -242,10 +300,8 @@ def research_by_url(url_or_share: str, count: int = 10, sort_type: str = "0") ->
 
     print(f"[2/3] 搜索关键词: {keywords}", file=sys.stderr)
 
-    # 搜索相关爆款
     viral_results = search_douyin(keywords, count=count, sort_type=sort_type)
 
-    # 批量转写爆款视频（串行，避免限流）
     print(f"[3/3] 转写 {len(viral_results)} 条爆款视频...", file=sys.stderr)
     for i, item in enumerate(viral_results):
         video_url = f"https://www.douyin.com/video/{item['aweme_id']}"
@@ -255,8 +311,8 @@ def research_by_url(url_or_share: str, count: int = 10, sort_type: str = "0") ->
         print(f"  [{i+1}/{len(viral_results)}] @{item['author']} - 赞{item['likes']}", file=sys.stderr)
         time.sleep(0.5)
 
-    # 按点赞排序
     viral_results.sort(key=lambda x: x.get("likes", 0), reverse=True)
+    viral_results = viral_results[:count]
 
     return {
         "original": {
@@ -287,7 +343,9 @@ def research_by_keyword(keyword: str, count: int = 10, sort_type: str = "0") -> 
         print(f"  [{i+1}/{len(viral_results)}] @{item['author']} - 赞{item['likes']}", file=sys.stderr)
         time.sleep(0.5)
 
+    # 按点赞降序排列，取 top N
     viral_results.sort(key=lambda x: x.get("likes", 0), reverse=True)
+    viral_results = viral_results[:count]
     hashtags = extract_hashtags(keyword)
 
     return {
@@ -303,7 +361,7 @@ def research_by_keyword(keyword: str, count: int = 10, sort_type: str = "0") -> 
 
 
 def _build_summary(context: str, hashtags: list[str], viral: list[dict]) -> str:
-    """构建结构化摘要供 Claude 分析。"""
+    """构建结构化摘要供 AI 分析。"""
     lines = [f"主题: {context}", f"标签: {', '.join(hashtags[:5])}", ""]
 
     if viral:
@@ -336,15 +394,16 @@ def main():
 
     parser = argparse.ArgumentParser(description="多源爆款搜集+AI重组文案")
     parser.add_argument("--url", help="原视频链接或分享口令")
-    parser.add_argument("--keyword", help="直接用关键词搜索爆款")
+    parser.add_argument("--keyword", help="LLM 定义的关键词搜索爆款")
     parser.add_argument("--batch", help="批量处理文件，每行一个 URL 或关键词")
-    parser.add_argument("--count", type=int, default=10, help="搜索数量（默认10）")
+    parser.add_argument("--count", type=int, default=5, help="搜索数量（默认5）")
     parser.add_argument(
         "--sort",
         choices=["general", "likes", "newest"],
-        default="general",
+        default="likes",
         help="排序方式: general=综合, likes=最多点赞, newest=最新",
     )
+    parser.add_argument("--transcribe-only", action="store_true", help="只转写原视频，不搜索（步骤1）")
     parser.add_argument("--no-transcribe", action="store_true", help="跳过转写（只用文案描述）")
     parser.add_argument("--json", action="store_true", help="输出 JSON（默认输出格式化文本）")
     args = parser.parse_args()
@@ -354,7 +413,13 @@ def main():
 
     sort_type = SORT_MAP.get(args.sort, "0")
 
-    # 单条 URL
+    # 步骤1: 只转写原视频
+    if args.url and args.transcribe_only:
+        result = transcribe_only(args.url)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return
+
+    # 一步到底模式: URL + 自动提取关键词
     if args.url:
         result = research_by_url(args.url, count=args.count, sort_type=sort_type)
         if args.no_transcribe:
@@ -367,7 +432,7 @@ def main():
         else:
             print(result["summary"])
             print("\n" + "=" * 50)
-            print("以上数据可供 Claude 分析爆款规律并生成衍生文案")
+            print("以上数据可供 AI 分析爆款规律并生成衍生文案")
             print("完整 JSON 数据请使用 --json 参数获取")
         return
 
@@ -384,7 +449,7 @@ def main():
         else:
             print(result["summary"])
             print("\n" + "=" * 50)
-            print("以上数据可供 Claude 分析爆款规律并生成衍生文案")
+            print("以上数据可供 AI 分析爆款规律并生成衍生文案")
         return
 
     # 批量
