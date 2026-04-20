@@ -55,16 +55,16 @@ python3 skills/content-research/scripts/research_and_write.py --url "链接或�
 
 ```bash
 # 校验 LLM 输出文件（字数 + 红线 + 流程完整性）
-python3 skills/content-research/scripts/validator.py --file output.md
+python3 skills/content-research/scripts/validator.py --file skills/content-research/output/主题_作者_日期.md
 
 # 严格模式：任一不通过 exit 1
-python3 skills/content-research/scripts/validator.py --file output.md --strict
+python3 skills/content-research/scripts/validator.py --file skills/content-research/output/主题_作者_日期.md --strict
 
 # 只统计某段文案的字数
 python3 skills/content-research/scripts/validator.py --count-only "文案内容..."
 
 # JSON 输出（可编程处理）
-python3 skills/content-research/scripts/validator.py --file output.md --json
+python3 skills/content-research/scripts/validator.py --file skills/content-research/output/主题_作者_日期.md --json
 ```
 
 Validator 检查三项：
