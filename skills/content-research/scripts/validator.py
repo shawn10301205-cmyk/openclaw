@@ -408,6 +408,20 @@ def main():
         print("[ERROR] 文案内容为空", file=sys.stderr)
         sys.exit(1)
 
+    # 前置条件守卫：必须包含至少两个阶段标记才视为文案文件
+    stage_markers_found = 0
+    for _, pattern in [("s1", r"阶段一|复刻稿"), ("s2", r"阶段二|轻度改写"), ("s3", r"阶段三|深度改写")]:
+        if re.search(pattern, text):
+            stage_markers_found += 1
+
+    if stage_markers_found < 2:
+        print(
+            "[ERROR] 该文件不包含完整的文案阶段（阶段一/二/三），validator 仅在校验最终文案时使用。\n"
+            "        如果你正在搜索或分析爆款阶段，请跳过 validator，先生成完整文案再校验。",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     report = validate(text)
 
     if args.json:

@@ -46,6 +46,9 @@ TE_92K_API_URL = "https://te.92k.fun/user/analysis"
 
 SORT_MAP = {"general": "0", "likes": "2", "newest": "1"}
 
+# 爆款质量门槛：低于此赞数的视频不转写（节省 API 调用和上下文）
+DEFAULT_MIN_LIKES = 1000
+
 
 # ── 视频转写（内联，不依赖 video-to-text）─────────────
 
@@ -273,7 +276,7 @@ def transcribe_only(url_or_share: str) -> dict:
     }
 
 
-def research_by_url(url_or_share: str, count: int = 5, sort_type: str = "0") -> dict:
+def research_by_url(url_or_share: str, count: int = 5, sort_type: str = "0", min_likes: int = DEFAULT_MIN_LIKES) -> dict:
     """一步到底模式：转写原视频 + jieba 提取关键词 + 搜索 + 转写爆款。"""
     url = extract_url_from_share(url_or_share) or url_or_share
 
@@ -300,9 +303,19 @@ def research_by_url(url_or_share: str, count: int = 5, sort_type: str = "0") -> 
 
     print(f"[2/3] 搜索关键词: {keywords}", file=sys.stderr)
 
-    viral_results = search_douyin(keywords, count=count, sort_type=sort_type)
+    # 多搜一些以补偿过滤损失
+    search_count = max(count * 3, 15)
+    viral_results = search_douyin(keywords, count=search_count, sort_type=sort_type)
 
-    print(f"[3/3] 转写 {len(viral_results)} 条爆款视频...", file=sys.stderr)
+    # 按赞数降序排列，过滤掉不达标的
+    viral_results.sort(key=lambda x: x.get("likes", 0), reverse=True)
+    total_before = len(viral_results)
+    viral_results = [v for v in viral_results if v.get("likes", 0) >= min_likes]
+    if len(viral_results) < total_before:
+        print(f"  过滤掉 {total_before - len(viral_results)} 条低于 {min_likes} 赞的视频", file=sys.stderr)
+    viral_results = viral_results[:count]
+
+    print(f"[3/3] 转写 {len(viral_results)} 条达标爆款视频...", file=sys.stderr)
     for i, item in enumerate(viral_results):
         video_url = f"https://www.douyin.com/video/{item['aweme_id']}"
         t_result = url_to_text(video_url)
@@ -310,9 +323,6 @@ def research_by_url(url_or_share: str, count: int = 5, sort_type: str = "0") -> 
         item["transcript_ok"] = t_result.get("ok", False)
         print(f"  [{i+1}/{len(viral_results)}] @{item['author']} - 赞{item['likes']}", file=sys.stderr)
         time.sleep(0.5)
-
-    viral_results.sort(key=lambda x: x.get("likes", 0), reverse=True)
-    viral_results = viral_results[:count]
 
     return {
         "original": {
@@ -328,13 +338,23 @@ def research_by_url(url_or_share: str, count: int = 5, sort_type: str = "0") -> 
     }
 
 
-def research_by_keyword(keyword: str, count: int = 10, sort_type: str = "0") -> dict:
+def research_by_keyword(keyword: str, count: int = 10, sort_type: str = "0", min_likes: int = DEFAULT_MIN_LIKES) -> dict:
     """通过关键词直接搜索爆款。"""
     print(f"[1/2] 搜索关键词: {keyword}", file=sys.stderr)
 
-    viral_results = search_douyin(keyword, count=count, sort_type=sort_type)
+    # 多搜一些以补偿过滤损失
+    search_count = max(count * 3, 15)
+    viral_results = search_douyin(keyword, count=search_count, sort_type=sort_type)
 
-    print(f"[2/2] 转写 {len(viral_results)} 条爆款视频...", file=sys.stderr)
+    # 按赞数降序排列，过滤掉不达标的
+    viral_results.sort(key=lambda x: x.get("likes", 0), reverse=True)
+    total_before = len(viral_results)
+    viral_results = [v for v in viral_results if v.get("likes", 0) >= min_likes]
+    if len(viral_results) < total_before:
+        print(f"  过滤掉 {total_before - len(viral_results)} 条低于 {min_likes} 赞的视频", file=sys.stderr)
+    viral_results = viral_results[:count]
+
+    print(f"[2/2] 转写 {len(viral_results)} 条达标爆款视频...", file=sys.stderr)
     for i, item in enumerate(viral_results):
         video_url = f"https://www.douyin.com/video/{item['aweme_id']}"
         t_result = url_to_text(video_url)
@@ -342,10 +362,6 @@ def research_by_keyword(keyword: str, count: int = 10, sort_type: str = "0") -> 
         item["transcript_ok"] = t_result.get("ok", False)
         print(f"  [{i+1}/{len(viral_results)}] @{item['author']} - 赞{item['likes']}", file=sys.stderr)
         time.sleep(0.5)
-
-    # 按点赞降序排列，取 top N
-    viral_results.sort(key=lambda x: x.get("likes", 0), reverse=True)
-    viral_results = viral_results[:count]
     hashtags = extract_hashtags(keyword)
 
     return {
@@ -405,6 +421,7 @@ def main():
     )
     parser.add_argument("--transcribe-only", action="store_true", help="只转写原视频，不搜索（步骤1）")
     parser.add_argument("--no-transcribe", action="store_true", help="跳过转写（只用文案描述）")
+    parser.add_argument("--min-likes", type=int, default=DEFAULT_MIN_LIKES, help=f"爆款赞数门槛，低于此数不转写（默认 {DEFAULT_MIN_LIKES}，设 0 关闭）")
     parser.add_argument("--json", action="store_true", help="输出 JSON（默认输出格式化文本）")
     args = parser.parse_args()
 
@@ -421,7 +438,7 @@ def main():
 
     # 一步到底模式: URL + 自动提取关键词
     if args.url:
-        result = research_by_url(args.url, count=args.count, sort_type=sort_type)
+        result = research_by_url(args.url, count=args.count, sort_type=sort_type, min_likes=args.min_likes)
         if args.no_transcribe:
             for v in result.get("viral_videos", []):
                 v["transcript"] = ""
@@ -438,7 +455,7 @@ def main():
 
     # 关键词搜索
     if args.keyword:
-        result = research_by_keyword(args.keyword, count=args.count, sort_type=sort_type)
+        result = research_by_keyword(args.keyword, count=args.count, sort_type=sort_type, min_likes=args.min_likes)
         if args.no_transcribe:
             for v in result.get("viral_videos", []):
                 v["transcript"] = ""
@@ -466,9 +483,9 @@ def main():
             print(f"# [{i}/{len(lines)}] {line[:50]}", file=sys.stderr)
 
             if line.startswith("http") or "douyin.com" in line or "v.douyin.com" in line:
-                r = research_by_url(line, count=args.count, sort_type=sort_type)
+                r = research_by_url(line, count=args.count, sort_type=sort_type, min_likes=args.min_likes)
             else:
-                r = research_by_keyword(line, count=args.count, sort_type=sort_type)
+                r = research_by_keyword(line, count=args.count, sort_type=sort_type, min_likes=args.min_likes)
 
             results.append(r)
 
