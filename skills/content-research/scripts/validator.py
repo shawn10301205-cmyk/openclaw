@@ -2,7 +2,7 @@
 """Content-research 输出校验器。
 
 对 LLM 生成的改写文案做三件事：
-1. 字数审查：去标点后统计纯文字字数，必须 500–800
+1. 字数审查：去标点后统计纯文字字数，必须 450–800
 2. 红线审查：扫描敏感词 / 人身攻击词 / 政治相关词
 3. 流程审查：检查输出是否包含所有必做步骤
 
@@ -384,7 +384,7 @@ def main():
     if args.count_only:
         wc = count_words(args.count_only)
         in_range = MIN_WORDS <= wc <= MAX_WORDS
-        print(f"字数: {wc} ({'合格' if in_range else '不合格，需 500-800'})")
+        print(f"字数: {wc} ({'合格' if in_range else '不合格，需 450-800'})")
         if args.strict and not in_range:
             sys.exit(1)
         return

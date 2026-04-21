@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""多源爆款搜集+AI重组文案 — 独立脚本，不依赖其他 skill。
+"""多源爆款搜集与二创前研究脚本。
 
 用法:
   # 步骤1: 只转写原视频，返回文案给 LLM 分析
@@ -242,6 +242,39 @@ def extract_url_from_share(text: str) -> str | None:
     return urls[0] if urls else None
 
 
+# ── 质量门槛 ──────────────────────────────────────────
+
+
+def build_quality_gate(viral_results: list[dict], min_likes: int) -> dict:
+    """汇总当前搜索样本是否达标。
+
+    这里不自动重搜，只把门槛结果和建议返回给上层工作流。
+    """
+    retained_count = len(viral_results)
+    total_likes = sum(int(item.get("likes", 0) or 0) for item in viral_results)
+    every_item_pass = all(int(item.get("likes", 0) or 0) >= min_likes for item in viral_results) if viral_results else False
+    total_likes_pass = total_likes > 10000
+    passed = every_item_pass and total_likes_pass
+    if passed:
+        next_action = "质量达标，可进入爆款机制分析和改写阶段。"
+    elif retained_count == 0:
+        next_action = "当前关键词没有拿到达标样本，建议直接换关键词重搜。"
+    elif not total_likes_pass:
+        next_action = "样本总赞数不足 10000，建议换关键词或换角度再跑下一轮。"
+    else:
+        next_action = "样本勉强可用，但质量不足，建议标注风险后继续。"
+    return {
+        "pass": passed,
+        "min_likes_per_item": min_likes,
+        "retained_count": retained_count,
+        "total_likes": total_likes,
+        "every_item_pass": every_item_pass,
+        "total_likes_pass": total_likes_pass,
+        "next_action": next_action,
+        "note": "当前脚本不会自动重搜；请由 LLM 或操作者决定是否换关键词继续。",
+    }
+
+
 # ── 核心流程 ──────────────────────────────────────────
 
 
@@ -324,6 +357,8 @@ def research_by_url(url_or_share: str, count: int = 5, sort_type: str = "0", min
         print(f"  [{i+1}/{len(viral_results)}] @{item['author']} - 赞{item['likes']}", file=sys.stderr)
         time.sleep(0.5)
 
+    quality_gate = build_quality_gate(viral_results, min_likes)
+
     return {
         "original": {
             "url": url,
@@ -333,8 +368,9 @@ def research_by_url(url_or_share: str, count: int = 5, sort_type: str = "0", min
             "keywords_for_search": keywords,
         },
         "viral_videos": viral_results,
+        "quality_gate": quality_gate,
         "analysis_ready": True,
-        "summary": _build_summary(original_desc, hashtags, viral_results),
+        "summary": _build_summary(original_desc, hashtags, viral_results, quality_gate),
     }
 
 
@@ -364,6 +400,8 @@ def research_by_keyword(keyword: str, count: int = 10, sort_type: str = "0", min
         time.sleep(0.5)
     hashtags = extract_hashtags(keyword)
 
+    quality_gate = build_quality_gate(viral_results, min_likes)
+
     return {
         "original": {
             "keyword": keyword,
@@ -371,12 +409,13 @@ def research_by_keyword(keyword: str, count: int = 10, sort_type: str = "0", min
             "keywords_for_search": keyword,
         },
         "viral_videos": viral_results,
+        "quality_gate": quality_gate,
         "analysis_ready": True,
-        "summary": _build_summary(keyword, hashtags, viral_results),
+        "summary": _build_summary(keyword, hashtags, viral_results, quality_gate),
     }
 
 
-def _build_summary(context: str, hashtags: list[str], viral: list[dict]) -> str:
+def _build_summary(context: str, hashtags: list[str], viral: list[dict], quality_gate: dict) -> str:
     """构建结构化摘要供 AI 分析。"""
     lines = [f"主题: {context}", f"标签: {', '.join(hashtags[:5])}", ""]
 
@@ -399,6 +438,15 @@ def _build_summary(context: str, hashtags: list[str], viral: list[dict]) -> str:
         lines.append("")
         lines.append("高频标签: " + ", ".join(f"#{tag}({cnt})" for tag, cnt in tag_counts))
 
+    lines.append("")
+    lines.append(
+        "质量门槛: "
+        f"{'达标' if quality_gate['pass'] else '未达标'} | "
+        f"保留样本 {quality_gate['retained_count']} 条 | "
+        f"总赞数 {quality_gate['total_likes']}"
+    )
+    lines.append(f"下一步建议: {quality_gate['next_action']}")
+
     return "\n".join(lines)
 
 
@@ -408,7 +456,7 @@ def _build_summary(context: str, hashtags: list[str], viral: list[dict]) -> str:
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="多源爆款搜集+AI重组文案")
+    parser = argparse.ArgumentParser(description="多源爆款搜集与二创前研究")
     parser.add_argument("--url", help="原视频链接或分享口令")
     parser.add_argument("--keyword", help="LLM 定义的关键词搜索爆款")
     parser.add_argument("--batch", help="批量处理文件，每行一个 URL 或关键词")
